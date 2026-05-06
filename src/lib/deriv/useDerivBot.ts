@@ -168,8 +168,19 @@ export function useDerivBot() {
         const res = await c.buyDigitDiff({ symbol: SYMBOL.code, barrier, stake, duration });
         return { res };
       } catch (err: any) {
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        const code = err?.code || "";
+        const msg = (err?.message || "").toString();
+        const isRate =
+          code === "RateLimit" ||
+          /rate.?limit/i.test(msg) ||
+          /too many/i.test(msg);
+        const maxAttempts = isRate ? 5 : 2;
+        if (attempt < maxAttempts) {
+          // Rate limit → exponential backoff starting ~1.2s; otherwise short retry.
+          const delay = isRate
+            ? 1200 * Math.pow(1.6, attempt) + Math.random() * 250
+            : 300 * (attempt + 1);
+          await new Promise((r) => setTimeout(r, delay));
           return buyWithRetry(barrier, stake, duration, attempt + 1);
         }
         return { err };
@@ -211,11 +222,18 @@ export function useDerivBot() {
 
     setState((s) => ({ ...s, trades: [...placeholders, ...s.trades].slice(0, 200) }));
 
-    const buyResults = await Promise.all(
-      placeholders.map((p) =>
-        buyWithRetry(barrier, stake, duration).then((r) => ({ p, ...r })),
-      ),
-    );
+    // Deriv enforces a per-account buy rate limit (~1 buy/sec). Stagger sequentially
+    // with a small gap so a 5-trade batch doesn't trip "RateLimit" errors.
+    const BUY_GAP_MS = 1100;
+    const buyResults: Array<{ p: TradeRecord; res?: any; err?: any }> = [];
+    for (let i = 0; i < placeholders.length; i++) {
+      const p = placeholders[i];
+      const r = await buyWithRetry(barrier, stake, duration);
+      buyResults.push({ p, ...r });
+      if (i < placeholders.length - 1) {
+        await new Promise((res) => setTimeout(res, BUY_GAP_MS));
+      }
+    }
 
     const settlePromises: Promise<void>[] = [];
 
