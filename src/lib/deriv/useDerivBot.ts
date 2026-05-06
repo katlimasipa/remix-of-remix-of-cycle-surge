@@ -45,7 +45,7 @@ const DEFAULT_CONFIG: BotConfig = {
   digit: 0,
   repetitions: 3,
   ticks: 1,
-  batchSize: 5,
+  batchSize: 1,
   takeProfit: null,
   stopLoss: null,
   maxCycles: null,
@@ -91,6 +91,9 @@ export function useDerivBot() {
   // We keep a global "next allowed buy time" and increase the gap on RateLimit responses.
   const nextAllowedBuyAtRef = useRef(0);
   const adaptiveBuyGapMsRef = useRef(1200); // starts ~1.2s, expands on rate limit, decays on success
+  const balanceRefreshInFlightRef = useRef(false);
+  const lastBalanceRefreshAtRef = useRef(0);
+  const balanceRefreshTimerRef = useRef<number | null>(null);
 
   const pushLog = useCallback((msg: string) => {
     setState((s) => ({
@@ -166,6 +169,40 @@ export function useDerivBot() {
     }
   }, [token, ensureClient, pushLog, subscribeTicks]);
 
+  const refreshBalanceThrottled = useCallback(
+    (reason: string) => {
+      const c = clientRef.current;
+      if (!c) return;
+
+      // Balance calls are relatively expensive; also don't spam while trades settle.
+      const MIN_GAP_MS = 1500;
+      const now = Date.now();
+      const dueIn = Math.max(0, lastBalanceRefreshAtRef.current + MIN_GAP_MS - now);
+
+      const schedule = (ms: number) => {
+        if (balanceRefreshTimerRef.current != null) return;
+        balanceRefreshTimerRef.current = window.setTimeout(async () => {
+          balanceRefreshTimerRef.current = null;
+          if (balanceRefreshInFlightRef.current) return;
+          balanceRefreshInFlightRef.current = true;
+          try {
+            const bal = await c.balance();
+            lastBalanceRefreshAtRef.current = Date.now();
+            const nextBalance = bal.balance?.balance ?? null;
+            setState((s) => ({ ...s, balance: nextBalance }));
+          } catch (e: unknown) {
+            pushLog(`Balance refresh failed (${reason}): ${errMessage(e)}`);
+          } finally {
+            balanceRefreshInFlightRef.current = false;
+          }
+        }, ms);
+      };
+
+      schedule(dueIn);
+    },
+    [pushLog],
+  );
+
   const updateProfit = useCallback((delta: number) => {
     totalProfitRef.current += delta;
     setState((s) => {
@@ -213,6 +250,8 @@ export function useDerivBot() {
     const ticks = ticksRef.current;
     if (!digitRepeatTrigger(ticks, cfg.digit, cfg.repetitions)) return;
 
+    const effectiveBatchSize = cfg.ticks <= 1 ? 1 : cfg.batchSize;
+
     inFlightRef.current = true;
     cycleRef.current += 1;
     const cycle = cycleRef.current;
@@ -222,10 +261,10 @@ export function useDerivBot() {
 
     setState((s) => ({ ...s, status: "running", cycle }));
     pushLog(
-      `Cycle #${cycle}: digit ${barrier} repeated ${cfg.repetitions}× → ${cfg.batchSize}× DIGITDIFF≠${barrier} @ $${stake} (${duration}t)`,
+      `Cycle #${cycle}: digit ${barrier} repeated ${cfg.repetitions}× → ${effectiveBatchSize}× DIGITDIFF≠${barrier} @ $${stake} (${duration}t)`,
     );
 
-    const placeholders: TradeRecord[] = Array.from({ length: cfg.batchSize }, (_, i) => ({
+    const placeholders: TradeRecord[] = Array.from({ length: effectiveBatchSize }, (_, i) => ({
       id: `${cycle}-${i}-${Date.now()}`,
       cycle,
       predictedDigit: barrier,
@@ -277,6 +316,7 @@ export function useDerivBot() {
         };
       });
       if (didApply) updateProfit(profit);
+      if (didApply) refreshBalanceThrottled("settlement");
       return didApply;
     };
 

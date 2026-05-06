@@ -279,6 +279,11 @@ function Dashboard({ email }: { email: string }) {
                 onChange={(e) => setCfg({ batchSize: Math.max(1, +e.target.value || 1) })}
                 className="mt-2 font-mono"
               />
+              {bot.config.ticks <= 1 && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  For 1-tick contracts, batch size is forced to 1 (Deriv buy rate limit + timing).
+                </p>
+              )}
             </div>
           </div>
         </section>
