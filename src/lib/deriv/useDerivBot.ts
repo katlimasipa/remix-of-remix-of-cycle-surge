@@ -1,16 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DerivClient } from "./client";
-import { evaluateSymbol, resolveEntry } from "./strategy";
+import { digitRepeatTrigger, lastDigitOf } from "./strategy";
 import { stakeForProfit } from "./stake";
-import {
-  SYMBOL_LIST,
-  type BotConfig,
-  type BotStatus,
-  type Candle,
-  type SymbolSignal,
-  type Tick,
-  type TradeRecord,
-} from "./types";
+import { SYMBOL, type BotConfig, type BotStatus, type Tick, type TradeRecord } from "./types";
 
 interface EquityPoint {
   t: number;
@@ -20,9 +12,7 @@ interface EquityPoint {
 interface UseDerivBotState {
   status: BotStatus;
   wsStatus: "connecting" | "open" | "closed" | "error" | "idle";
-  ticksBySymbol: Record<string, Tick[]>;
-  signals: SymbolSignal[];
-  selected: { symbol: string; mode: "momentum" | "spike"; direction: "CALL" | "PUT" } | null;
+  ticks: Tick[];
   trades: TradeRecord[];
   cycle: number;
   totalProfit: number;
@@ -33,30 +23,34 @@ interface UseDerivBotState {
   balance: number | null;
   lastError: string | null;
   authorized: boolean;
+  triggerStreak: number; // current run-length of the configured digit
   log: { t: number; msg: string }[];
 }
 
 const DEFAULT_CONFIG: BotConfig = {
-  symbols: SYMBOL_LIST.map((s) => s.code),
+  digit: 0,
+  repetitions: 3,
+  ticks: 1,
   batchSize: 5,
   takeProfit: null,
   stopLoss: null,
   maxCycles: null,
 };
 
-const HTF_REFRESH_MS = 60_000;
-
 export function useDerivBot() {
   const [token, setToken] = useState<string>(
     () => (typeof window !== "undefined" && localStorage.getItem("deriv_token")) || "",
   );
   const [config, setConfig] = useState<BotConfig>(DEFAULT_CONFIG);
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
   const [state, setState] = useState<UseDerivBotState>({
     status: "idle",
     wsStatus: "idle",
-    ticksBySymbol: {},
-    signals: [],
-    selected: null,
+    ticks: [],
     trades: [],
     cycle: 0,
     totalProfit: 0,
@@ -67,21 +61,18 @@ export function useDerivBot() {
     balance: null,
     lastError: null,
     authorized: false,
+    triggerStreak: 0,
     log: [],
   });
 
   const clientRef = useRef<DerivClient | null>(null);
-  const ticksRef = useRef<Record<string, Tick[]>>({});
-  const candles15Ref = useRef<Record<string, Candle[]>>({});
-  const candles60Ref = useRef<Record<string, Candle[]>>({});
-  const subscribedRef = useRef<Set<string>>(new Set());
+  const ticksRef = useRef<Tick[]>([]);
+  const subscribedRef = useRef(false);
   const runningRef = useRef(false);
   const inFlightRef = useRef(false);
   const totalProfitRef = useRef(0);
   const cycleRef = useRef(0);
-  const cooldownRef = useRef(0);
   const consecutiveLossesRef = useRef(0);
-  const htfTimerRef = useRef<number | null>(null);
 
   const pushLog = useCallback((msg: string) => {
     setState((s) => ({
@@ -105,51 +96,30 @@ export function useDerivBot() {
     return c;
   }, []);
 
-  const refreshHTFFor = useCallback(async (symbol: string) => {
+  const subscribeTicks = useCallback(async () => {
     const c = clientRef.current;
-    if (!c) return;
+    if (!c || subscribedRef.current) return;
+    subscribedRef.current = true;
     try {
-      const [r15, r60] = await Promise.all([
-        c.candles(symbol, 900, 60),
-        c.candles(symbol, 3600, 60),
-      ]);
-      const map = (r: any): Candle[] =>
-        (r?.candles ?? []).map((k: any) => ({
-          epoch: k.epoch,
-          open: Number(k.open),
-          high: Number(k.high),
-          low: Number(k.low),
-          close: Number(k.close),
-        }));
-      candles15Ref.current[symbol] = map(r15);
-      candles60Ref.current[symbol] = map(r60);
+      await c.ticks(SYMBOL.code, (msg) => {
+        if (msg.tick && msg.tick.symbol === SYMBOL.code) {
+          const quote = Number(msg.tick.quote);
+          const t: Tick = {
+            epoch: msg.tick.epoch,
+            quote,
+            lastDigit: lastDigitOf(quote),
+          };
+          const prev = ticksRef.current;
+          const next = [...prev.slice(-200), t];
+          ticksRef.current = next;
+        }
+      });
+      pushLog(`Subscribed to ${SYMBOL.label} ticks.`);
     } catch (e: any) {
-      // silent — HTF is best-effort
+      subscribedRef.current = false;
+      pushLog(`Failed to subscribe: ${e?.message ?? e}`);
     }
-  }, []);
-
-  const subscribeSymbol = useCallback(
-    async (symbol: string) => {
-      const c = clientRef.current;
-      if (!c) return;
-      if (subscribedRef.current.has(symbol)) return;
-      subscribedRef.current.add(symbol);
-      try {
-        await c.ticks(symbol, (msg) => {
-          if (msg.tick && msg.tick.symbol === symbol) {
-            const t: Tick = { epoch: msg.tick.epoch, quote: Number(msg.tick.quote) };
-            const prev = ticksRef.current[symbol] ?? [];
-            ticksRef.current[symbol] = [...prev.slice(-200), t];
-          }
-        });
-        await refreshHTFFor(symbol);
-      } catch (e: any) {
-        pushLog(`Failed to subscribe ${symbol}: ${e?.message ?? e}`);
-        subscribedRef.current.delete(symbol);
-      }
-    },
-    [pushLog, refreshHTFFor],
-  );
+  }, [pushLog]);
 
   const connect = useCallback(async () => {
     if (!token) {
@@ -168,17 +138,7 @@ export function useDerivBot() {
         status: "idle",
       }));
       pushLog("Authorized.");
-      // subscribe to all configured symbols
-      for (const sym of config.symbols) {
-        await subscribeSymbol(sym);
-      }
-      pushLog(`Subscribed to ${config.symbols.length} symbols.`);
-      // HTF refresh loop
-      if (htfTimerRef.current == null) {
-        htfTimerRef.current = window.setInterval(() => {
-          for (const sym of config.symbols) refreshHTFFor(sym);
-        }, HTF_REFRESH_MS);
-      }
+      await subscribeTicks();
       return true;
     } catch (e: any) {
       const msg = e?.message || "Auth failed";
@@ -186,7 +146,7 @@ export function useDerivBot() {
       pushLog(`Error: ${msg}`);
       return false;
     }
-  }, [token, ensureClient, config.symbols, pushLog, refreshHTFFor, subscribeSymbol]);
+  }, [token, ensureClient, pushLog, subscribeTicks]);
 
   const updateProfit = useCallback((delta: number) => {
     totalProfitRef.current += delta;
@@ -201,36 +161,16 @@ export function useDerivBot() {
     });
   }, []);
 
-  /** Score all symbols and return the best entry candidate. */
-  const evaluateAll = useCallback((): SymbolSignal[] => {
-    return SYMBOL_LIST.filter((d) => config.symbols.includes(d.code))
-      .map((d) =>
-        evaluateSymbol(
-          d,
-          ticksRef.current[d.code] ?? [],
-          candles15Ref.current[d.code] ?? [],
-          candles60Ref.current[d.code] ?? [],
-        ),
-      )
-      .sort((a, b) => b.score - a.score);
-  }, [config.symbols]);
-
   const buyWithRetry = useCallback(
-    async (
-      symbol: string,
-      direction: "CALL" | "PUT",
-      stake: number,
-      duration: number,
-      attempt = 0,
-    ): Promise<any> => {
+    async (barrier: number, stake: number, duration: number, attempt = 0): Promise<any> => {
       const c = clientRef.current!;
       try {
-        const res = await c.buyRiseFall({ symbol, direction, stake, duration });
+        const res = await c.buyDigitDiff({ symbol: SYMBOL.code, barrier, stake, duration });
         return { res };
       } catch (err: any) {
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
-          return buyWithRetry(symbol, direction, stake, duration, attempt + 1);
+          return buyWithRetry(barrier, stake, duration, attempt + 1);
         }
         return { err };
       }
@@ -243,59 +183,37 @@ export function useDerivBot() {
     if (!c) return;
     if (inFlightRef.current) return;
 
-    if (cooldownRef.current > 0) {
-      cooldownRef.current -= 1;
-      pushLog(`Cooldown: ${cooldownRef.current} cycle(s) remaining.`);
-      await new Promise((r) => setTimeout(r, 1500));
-      return;
-    }
-
-    const ranked = evaluateAll();
-    setState((s) => ({ ...s, signals: ranked }));
-
-    let chosen: { symbol: string; mode: "momentum" | "spike"; direction: "CALL" | "PUT" } | null =
-      null;
-    let speed: "fast" | "slow" = "fast";
-    for (const sig of ranked) {
-      const entry = resolveEntry(sig, ticksRef.current[sig.symbol] ?? []);
-      if (entry) {
-        chosen = { symbol: sig.symbol, mode: entry.mode, direction: entry.direction };
-        speed = sig.speed;
-        break;
-      }
-    }
-    if (!chosen) {
-      setState((s) => ({ ...s, selected: null }));
-      return;
-    }
+    const cfg = configRef.current;
+    const ticks = ticksRef.current;
+    if (!digitRepeatTrigger(ticks, cfg.digit, cfg.repetitions)) return;
 
     inFlightRef.current = true;
     cycleRef.current += 1;
     const cycle = cycleRef.current;
     const stake = stakeForProfit(totalProfitRef.current);
-    const duration = speed === "fast" ? 5 : 8;
+    const duration = Math.max(1, cfg.ticks);
+    const barrier = cfg.digit;
 
-    setState((s) => ({ ...s, status: "running", cycle, selected: chosen }));
+    setState((s) => ({ ...s, status: "running", cycle }));
     pushLog(
-      `Cycle #${cycle}: ${chosen.symbol} ${chosen.mode.toUpperCase()} → ${config.batchSize}× ${chosen.direction} @ $${stake} (${duration}t)`,
+      `Cycle #${cycle}: digit ${barrier} repeated ${cfg.repetitions}× → ${cfg.batchSize}× DIGITDIFF≠${barrier} @ $${stake} (${duration}t)`,
     );
 
-    const placeholders: TradeRecord[] = Array.from({ length: config.batchSize }, (_, i) => ({
+    const placeholders: TradeRecord[] = Array.from({ length: cfg.batchSize }, (_, i) => ({
       id: `${cycle}-${i}-${Date.now()}`,
-      symbol: chosen!.symbol,
       cycle,
-      direction: chosen!.direction,
+      predictedDigit: barrier,
       stake,
       duration,
       status: "pending",
       openedAt: Date.now(),
     }));
-    
+
     setState((s) => ({ ...s, trades: [...placeholders, ...s.trades].slice(0, 200) }));
 
     const buyResults = await Promise.all(
       placeholders.map((p) =>
-        buyWithRetry(chosen!.symbol, chosen!.direction, stake, duration).then((r) => ({ p, ...r })),
+        buyWithRetry(barrier, stake, duration).then((r) => ({ p, ...r })),
       ),
     );
 
@@ -327,6 +245,8 @@ export function useDerivBot() {
             if (poc.is_sold) {
               const profit = Number(poc.profit ?? 0);
               const won = profit >= 0;
+              const exitSpot = Number(poc.exit_spot);
+              const exitDigit = isFinite(exitSpot) ? lastDigitOf(exitSpot) : undefined;
               setState((s) => ({
                 ...s,
                 trades: s.trades.map((t) =>
@@ -337,7 +257,8 @@ export function useDerivBot() {
                         profit,
                         payout: poc.payout,
                         entrySpot: poc.entry_spot,
-                        exitSpot: poc.exit_spot,
+                        exitSpot,
+                        exitDigit,
                         closedAt: Date.now(),
                       }
                     : t,
@@ -357,53 +278,58 @@ export function useDerivBot() {
     const profitBefore = totalProfitRef.current;
     await Promise.all(settlePromises);
     inFlightRef.current = false;
-    
+
     const cyclePnl = totalProfitRef.current - profitBefore;
 
     if (cyclePnl < 0) {
       consecutiveLossesRef.current += 1;
-      cooldownRef.current = consecutiveLossesRef.current >= 2 ? 5 : 2;
       pushLog(
-        `Cycle #${cycle} LOSS $${cyclePnl.toFixed(2)} • cooldown ${cooldownRef.current} (streak ${consecutiveLossesRef.current})`,
+        `Cycle #${cycle} LOSS $${cyclePnl.toFixed(2)} • streak ${consecutiveLossesRef.current}`,
       );
-      
       if (consecutiveLossesRef.current >= 3) {
         pushLog("Max loss streak reached (3). Stopping bot for safety.");
         runningRef.current = false;
-        setState(s => ({ ...s, status: "stopped" }));
+        setState((s) => ({ ...s, status: "stopped" }));
       }
     } else {
       consecutiveLossesRef.current = 0;
-      pushLog(`Cycle #${cycle} WIN +$${cyclePnl.toFixed(2)} • Total $${totalProfitRef.current.toFixed(2)}`);
+      pushLog(
+        `Cycle #${cycle} WIN +$${cyclePnl.toFixed(2)} • Total $${totalProfitRef.current.toFixed(2)}`,
+      );
     }
 
-    if (config.takeProfit != null && totalProfitRef.current >= config.takeProfit) {
+    if (cfg.takeProfit != null && totalProfitRef.current >= cfg.takeProfit) {
       pushLog(`Take profit reached. Stopping.`);
       runningRef.current = false;
     }
-    if (config.stopLoss != null && totalProfitRef.current <= -Math.abs(config.stopLoss)) {
+    if (cfg.stopLoss != null && totalProfitRef.current <= -Math.abs(cfg.stopLoss)) {
       pushLog(`Stop loss reached. Stopping.`);
       runningRef.current = false;
     }
-    if (config.maxCycles != null && cycle >= config.maxCycles) {
+    if (cfg.maxCycles != null && cycle >= cfg.maxCycles) {
       pushLog(`Max cycles reached. Stopping.`);
       runningRef.current = false;
     }
-  }, [buyWithRetry, config.batchSize, config.maxCycles, config.stopLoss, config.takeProfit, evaluateAll, pushLog, updateProfit]);
+  }, [buyWithRetry, pushLog, updateProfit]);
 
-  // Loop driver — every 500ms also pushes a UI snapshot of ticks/signals
+  // UI/loop driver
   useEffect(() => {
     const id = setInterval(() => {
-      // snapshot a few ticks per symbol for UI
-      const snap: Record<string, Tick[]> = {};
-      for (const sym of config.symbols) snap[sym] = (ticksRef.current[sym] ?? []).slice(-30);
-      setState((s) => ({ ...s, ticksBySymbol: snap }));
+      const ticks = ticksRef.current.slice(-50);
+      const cfg = configRef.current;
+      // compute current run-length of cfg.digit at the tail
+      let streak = 0;
+      for (let i = ticks.length - 1; i >= 0; i--) {
+        if (ticks[i].lastDigit === cfg.digit) streak++;
+        else break;
+      }
+      setState((s) => ({ ...s, ticks, triggerStreak: streak }));
 
       if (!runningRef.current || inFlightRef.current) return;
       runBatch();
-    }, 500);
+    }, 300);
     return () => clearInterval(id);
-  }, [runBatch, config.symbols]);
+  }, [runBatch]);
 
   const start = useCallback(async () => {
     if (!state.authorized) {
@@ -426,13 +352,11 @@ export function useDerivBot() {
     inFlightRef.current = false;
     totalProfitRef.current = 0;
     cycleRef.current = 0;
-    cooldownRef.current = 0;
     consecutiveLossesRef.current = 0;
     setState((s) => ({
       ...s,
       status: "idle",
       trades: [],
-      selected: null,
       cycle: 0,
       totalProfit: 0,
       currentStake: 1,
@@ -445,7 +369,6 @@ export function useDerivBot() {
 
   useEffect(() => {
     return () => {
-      if (htfTimerRef.current != null) clearInterval(htfTimerRef.current);
       clientRef.current?.disconnect();
     };
   }, []);

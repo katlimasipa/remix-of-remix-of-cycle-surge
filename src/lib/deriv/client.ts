@@ -157,10 +157,10 @@ export class DerivClient {
     return this.send({ forget_all: type });
   }
 
-  /** Buy a Rise/Fall contract (1 or 3 ticks). */
-  async buyRiseFall(opts: {
+  /** Buy a Digit Differs contract — wins if last digit ≠ barrier. */
+  async buyDigitDiff(opts: {
     symbol: string;
-    direction: "CALL" | "PUT";
+    barrier: number;       // the digit price must DIFFER from
     stake: number;
     duration?: number;
     currency?: string;
@@ -168,11 +168,12 @@ export class DerivClient {
     const parameters = {
       amount: opts.stake,
       basis: "stake",
-      contract_type: opts.direction,
+      contract_type: "DIGITDIFF",
       currency: opts.currency ?? "USD",
       duration: opts.duration ?? 1,
       duration_unit: "t",
       symbol: opts.symbol,
+      barrier: String(opts.barrier),
     };
     return this.send({
       buy: 1,
