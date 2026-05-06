@@ -222,11 +222,18 @@ export function useDerivBot() {
 
     setState((s) => ({ ...s, trades: [...placeholders, ...s.trades].slice(0, 200) }));
 
-    const buyResults = await Promise.all(
-      placeholders.map((p) =>
-        buyWithRetry(barrier, stake, duration).then((r) => ({ p, ...r })),
-      ),
-    );
+    // Deriv enforces a per-account buy rate limit (~1 buy/sec). Stagger sequentially
+    // with a small gap so a 5-trade batch doesn't trip "RateLimit" errors.
+    const BUY_GAP_MS = 1100;
+    const buyResults: Array<{ p: TradeRecord; res?: any; err?: any }> = [];
+    for (let i = 0; i < placeholders.length; i++) {
+      const p = placeholders[i];
+      const r = await buyWithRetry(barrier, stake, duration);
+      buyResults.push({ p, ...r });
+      if (i < placeholders.length - 1) {
+        await new Promise((res) => setTimeout(res, BUY_GAP_MS));
+      }
+    }
 
     const settlePromises: Promise<void>[] = [];
 
