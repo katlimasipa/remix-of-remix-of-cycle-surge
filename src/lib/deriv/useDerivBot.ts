@@ -168,8 +168,19 @@ export function useDerivBot() {
         const res = await c.buyDigitDiff({ symbol: SYMBOL.code, barrier, stake, duration });
         return { res };
       } catch (err: any) {
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        const code = err?.code || "";
+        const msg = (err?.message || "").toString();
+        const isRate =
+          code === "RateLimit" ||
+          /rate.?limit/i.test(msg) ||
+          /too many/i.test(msg);
+        const maxAttempts = isRate ? 5 : 2;
+        if (attempt < maxAttempts) {
+          // Rate limit → exponential backoff starting ~1.2s; otherwise short retry.
+          const delay = isRate
+            ? 1200 * Math.pow(1.6, attempt) + Math.random() * 250
+            : 300 * (attempt + 1);
+          await new Promise((r) => setTimeout(r, delay));
           return buyWithRetry(barrier, stake, duration, attempt + 1);
         }
         return { err };
