@@ -10,11 +10,7 @@ export function lastDigitOf(quote: number): number {
  * Returns true when the last `repetitions` ticks all end in `digit`.
  * The bot then fires a DIGITDIFF batch predicting the next tick will NOT be `digit`.
  */
-export function digitRepeatTrigger(
-  ticks: Tick[],
-  digit: number,
-  repetitions: number,
-): boolean {
+export function digitRepeatTrigger(ticks: Tick[], digit: number, repetitions: number): boolean {
   if (repetitions <= 0) return false;
   if (ticks.length < repetitions) return false;
   const tail = ticks.slice(-repetitions);

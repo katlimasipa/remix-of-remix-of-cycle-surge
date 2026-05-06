@@ -18,20 +18,10 @@ const toneClass: Record<NonNullable<Props["tone"]>, string> = {
 
 export function StatTile({ label, value, hint, tone = "neutral", className }: Props) {
   return (
-    <div
-      className={cn(
-        "glass rounded-xl p-5 flex flex-col gap-1",
-        className,
-      )}
-    >
-      <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </span>
+    <div className={cn("glass rounded-xl p-5 flex flex-col gap-1", className)}>
+      <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{label}</span>
       <span
-        className={cn(
-          "font-display text-3xl font-semibold tabular leading-tight",
-          toneClass[tone],
-        )}
+        className={cn("font-display text-3xl font-semibold tabular leading-tight", toneClass[tone])}
       >
         {value}
       </span>

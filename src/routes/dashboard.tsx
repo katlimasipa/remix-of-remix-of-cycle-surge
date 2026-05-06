@@ -54,15 +54,14 @@ function Dashboard({ email }: { email: string }) {
     bot.wsStatus === "open"
       ? "bg-success"
       : bot.wsStatus === "connecting"
-      ? "bg-warning animate-pulse"
-      : bot.wsStatus === "error"
-      ? "bg-destructive"
-      : "bg-muted-foreground";
+        ? "bg-warning animate-pulse"
+        : bot.wsStatus === "error"
+          ? "bg-destructive"
+          : "bg-muted-foreground";
 
   const lastTick = bot.ticks[bot.ticks.length - 1];
 
-  const setCfg = (patch: Partial<typeof bot.config>) =>
-    bot.setConfig({ ...bot.config, ...patch });
+  const setCfg = (patch: Partial<typeof bot.config>) => bot.setConfig({ ...bot.config, ...patch });
 
   return (
     <div className="min-h-screen relative">
@@ -85,9 +84,7 @@ function Dashboard({ email }: { email: string }) {
           <div className="flex items-center gap-4 text-xs">
             <div className="flex items-center gap-2">
               <span className={cn("h-2 w-2 rounded-full", wsDot)} />
-              <span className="text-muted-foreground uppercase tracking-wider">
-                {bot.wsStatus}
-              </span>
+              <span className="text-muted-foreground uppercase tracking-wider">{bot.wsStatus}</span>
             </div>
             {bot.balance != null && (
               <div className="text-sm">
@@ -101,8 +98,8 @@ function Dashboard({ email }: { email: string }) {
                 bot.status === "running"
                   ? "border-success/50 text-success bg-success/10"
                   : bot.status === "error"
-                  ? "border-destructive/50 text-destructive bg-destructive/10"
-                  : "border-border text-muted-foreground",
+                    ? "border-destructive/50 text-destructive bg-destructive/10"
+                    : "border-border text-muted-foreground",
               )}
             >
               {bot.status.toUpperCase()}
@@ -213,7 +210,8 @@ function Dashboard({ email }: { email: string }) {
               <h2 className="font-display font-semibold">Digit Differs strategy</h2>
               <p className="text-xs text-muted-foreground mt-1">
                 Wait for a digit to repeat N times in a row, then fire {bot.config.batchSize}{" "}
-                simultaneous DIGITDIFF contracts predicting the next tick will NOT end in that digit.
+                simultaneous DIGITDIFF contracts predicting the next tick will NOT end in that
+                digit.
               </p>
             </div>
           </div>
@@ -248,9 +246,7 @@ function Dashboard({ email }: { email: string }) {
                 min={1}
                 max={20}
                 value={bot.config.repetitions}
-                onChange={(e) =>
-                  setCfg({ repetitions: Math.max(1, +e.target.value || 1) })
-                }
+                onChange={(e) => setCfg({ repetitions: Math.max(1, +e.target.value || 1) })}
                 className="mt-2 font-mono"
               />
               <p className="text-[10px] text-muted-foreground mt-1">
@@ -280,9 +276,7 @@ function Dashboard({ email }: { email: string }) {
                 min={1}
                 max={20}
                 value={bot.config.batchSize}
-                onChange={(e) =>
-                  setCfg({ batchSize: Math.max(1, +e.target.value || 1) })
-                }
+                onChange={(e) => setCfg({ batchSize: Math.max(1, +e.target.value || 1) })}
                 className="mt-2 font-mono"
               />
             </div>
@@ -318,8 +312,7 @@ function Dashboard({ email }: { email: string }) {
                   <span className="text-foreground tabular">{lastTick.quote.toFixed(2)}</span>
                 </span>
                 <span>
-                  last digit:{" "}
-                  <span className="text-foreground tabular">{lastTick.lastDigit}</span>
+                  last digit: <span className="text-foreground tabular">{lastTick.lastDigit}</span>
                 </span>
               </>
             )}
@@ -354,8 +347,8 @@ function Dashboard({ email }: { email: string }) {
                     inActiveStreak
                       ? "border-primary bg-primary/30 text-foreground"
                       : isMatch
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-border/40 text-muted-foreground",
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/40 text-muted-foreground",
                   )}
                 >
                   {t.lastDigit}
@@ -399,9 +392,7 @@ function Dashboard({ email }: { email: string }) {
           <div className="glass rounded-2xl p-6">
             <div className="mb-4">
               <h2 className="font-display font-semibold">Equity curve</h2>
-              <p className="text-xs text-muted-foreground">
-                Cumulative P&L across closed trades
-              </p>
+              <p className="text-xs text-muted-foreground">Cumulative P&L across closed trades</p>
             </div>
             <EquityCurve data={bot.equity} />
           </div>

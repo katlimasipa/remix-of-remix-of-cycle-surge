@@ -25,10 +25,10 @@ export interface TradeRecord {
 }
 
 export interface BotConfig {
-  digit: number;          // 0-9 — digit that must repeat to trigger
-  repetitions: number;    // consecutive appearances required
-  ticks: number;          // contract duration in ticks
-  batchSize: number;      // simultaneous contracts per cycle
+  digit: number; // 0-9 — digit that must repeat to trigger
+  repetitions: number; // consecutive appearances required
+  ticks: number; // contract duration in ticks
+  batchSize: number; // simultaneous contracts per cycle
   takeProfit: number | null;
   stopLoss: number | null;
   maxCycles: number | null;

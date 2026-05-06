@@ -63,9 +63,9 @@ function Landing() {
             When the digit repeats, <span className="text-primary">strike.</span>
           </h1>
           <p className="mt-6 text-lg text-muted-foreground max-w-2xl">
-            A focused execution engine for Deriv's Volatility 100 Index. Pick a digit,
-            set how many times it must repeat, and fire a batch of simultaneous
-            DIGITDIFF contracts the instant the streak hits.
+            A focused execution engine for Deriv's Volatility 100 Index. Pick a digit, set how many
+            times it must repeat, and fire a batch of simultaneous DIGITDIFF contracts the instant
+            the streak hits.
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
             <Link to="/auth">
@@ -150,10 +150,22 @@ function Landing() {
           <h2 className="font-display text-3xl font-semibold mb-6">How it works</h2>
           <ol className="grid md:grid-cols-4 gap-5 text-sm">
             {[
-              { n: "01", t: "Connect", d: "Paste your Deriv API token (stored only in your browser)." },
-              { n: "02", t: "Configure", d: "Choose digit, repetitions, contract ticks, and batch size." },
+              {
+                n: "01",
+                t: "Connect",
+                d: "Paste your Deriv API token (stored only in your browser).",
+              },
+              {
+                n: "02",
+                t: "Configure",
+                d: "Choose digit, repetitions, contract ticks, and batch size.",
+              },
               { n: "03", t: "Watch", d: "The bot streams ticks and tracks the live digit streak." },
-              { n: "04", t: "Strike", d: "On trigger, fires N parallel DIGITDIFF contracts and settles the cycle." },
+              {
+                n: "04",
+                t: "Strike",
+                d: "On trigger, fires N parallel DIGITDIFF contracts and settles the cycle.",
+              },
             ].map((s) => (
               <li key={s.n} className="border-l-2 border-primary/40 pl-4">
                 <div className="font-mono text-xs text-primary">{s.n}</div>
@@ -173,9 +185,7 @@ function Landing() {
               Start trading →
             </Button>
           </Link>
-          <p className="text-xs text-muted-foreground mt-4">
-            Test on a Deriv demo account first.
-          </p>
+          <p className="text-xs text-muted-foreground mt-4">Test on a Deriv demo account first.</p>
         </div>
       </main>
 

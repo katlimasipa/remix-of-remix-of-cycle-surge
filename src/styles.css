@@ -107,25 +107,13 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --gradient-aurora: radial-gradient(
-      1200px 600px at 10% -10%,
-      oklch(0.45 0.22 275 / 0.45),
-      transparent 60%
-    ),
-    radial-gradient(
-      900px 500px at 100% 0%,
-      oklch(0.55 0.2 220 / 0.35),
-      transparent 60%
-    ),
-    radial-gradient(
-      700px 700px at 50% 120%,
-      oklch(0.5 0.22 305 / 0.3),
-      transparent 60%
-    );
-  --shadow-glow: 0 0 0 1px oklch(0.62 0.22 275 / 0.25),
-    0 20px 60px -20px oklch(0.45 0.22 275 / 0.55);
-  --shadow-card: 0 1px 0 0 oklch(1 0 0 / 0.04) inset,
-    0 30px 60px -30px oklch(0 0 0 / 0.6);
+  --gradient-aurora:
+    radial-gradient(1200px 600px at 10% -10%, oklch(0.45 0.22 275 / 0.45), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, oklch(0.55 0.2 220 / 0.35), transparent 60%),
+    radial-gradient(700px 700px at 50% 120%, oklch(0.5 0.22 305 / 0.3), transparent 60%);
+  --shadow-glow:
+    0 0 0 1px oklch(0.62 0.22 275 / 0.25), 0 20px 60px -20px oklch(0.45 0.22 275 / 0.55);
+  --shadow-card: 0 1px 0 0 oklch(1 0 0 / 0.04) inset, 0 30px 60px -30px oklch(0 0 0 / 0.6);
 }
 
 .dark {
@@ -173,19 +161,13 @@
     font-variant-numeric: tabular-nums;
   }
   .glass {
-    background: linear-gradient(
-      180deg,
-      oklch(1 0 0 / 0.04),
-      oklch(1 0 0 / 0.01)
-    );
+    background: linear-gradient(180deg, oklch(1 0 0 / 0.04), oklch(1 0 0 / 0.01));
     backdrop-filter: blur(10px);
     border: 1px solid oklch(1 0 0 / 0.08);
   }
   .grid-bg {
-    background-image: linear-gradient(
-        oklch(1 0 0 / 0.04) 1px,
-        transparent 1px
-      ),
+    background-image:
+      linear-gradient(oklch(1 0 0 / 0.04) 1px, transparent 1px),
       linear-gradient(90deg, oklch(1 0 0 / 0.04) 1px, transparent 1px);
     background-size: 32px 32px;
   }

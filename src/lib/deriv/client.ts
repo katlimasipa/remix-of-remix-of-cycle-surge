@@ -6,8 +6,20 @@
  * Docs: https://api.deriv.com/
  */
 
-type AnyMsg = Record<string, any>;
-type Listener = (msg: AnyMsg) => void;
+export type DerivError = {
+  code?: string;
+  message?: string;
+  [k: string]: unknown;
+};
+
+export type DerivMsg = {
+  req_id?: number;
+  subscription?: { id?: string; [k: string]: unknown };
+  error?: DerivError;
+  [k: string]: unknown;
+};
+
+type Listener = (msg: DerivMsg) => void;
 
 export interface DerivClientOptions {
   appId?: string;
@@ -21,7 +33,10 @@ export class DerivClient {
   private appId: string;
   private endpoint: string;
   private reqId = 1;
-  private pending = new Map<number, { resolve: (v: AnyMsg) => void; reject: (e: any) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: DerivMsg) => void; reject: (e: unknown) => void }
+  >();
   private subs = new Map<string, Listener>(); // by subscription id
   private reqSubs = new Map<number, Listener>(); // by req_id (until id known)
   private opts: DerivClientOptions;
@@ -52,9 +67,9 @@ export class DerivClient {
     };
 
     this.ws.onmessage = (ev) => {
-      let msg: AnyMsg;
+      let msg: DerivMsg;
       try {
-        msg = JSON.parse(ev.data);
+        msg = JSON.parse(ev.data) as DerivMsg;
       } catch {
         return;
       }
@@ -123,7 +138,7 @@ export class DerivClient {
     return new Promise((res) => this.openWaiters.push(res));
   }
 
-  async send(payload: AnyMsg, onSubMessage?: Listener): Promise<AnyMsg> {
+  async send(payload: Record<string, unknown>, onSubMessage?: Listener): Promise<DerivMsg> {
     await this.waitOpen();
     const req_id = this.reqId++;
     const full = { ...payload, req_id };
@@ -160,7 +175,7 @@ export class DerivClient {
   /** Buy a Digit Differs contract — wins if last digit ≠ barrier. */
   async buyDigitDiff(opts: {
     symbol: string;
-    barrier: number;       // the digit price must DIFFER from
+    barrier: number; // the digit price must DIFFER from
     stake: number;
     duration?: number;
     currency?: string;

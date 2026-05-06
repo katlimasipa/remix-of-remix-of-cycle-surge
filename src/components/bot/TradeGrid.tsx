@@ -70,9 +70,7 @@ export function TradeGrid({ trades }: Props) {
                   )}
                   title={t.error || `${t.status} • ${t.profit ?? "-"}`}
                 >
-                  <div className="uppercase tracking-wide opacity-70 text-[10px]">
-                    {t.status}
-                  </div>
+                  <div className="uppercase tracking-wide opacity-70 text-[10px]">{t.status}</div>
                   <div className="tabular mt-1 text-sm">
                     {t.exitDigit != null ? `→ ${t.exitDigit}` : "—"}
                   </div>

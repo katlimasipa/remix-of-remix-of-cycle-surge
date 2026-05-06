@@ -30,17 +30,37 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Lovable App" },
-      { name: "description", content: "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades." },
+      {
+        name: "description",
+        content:
+          "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades.",
+      },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades." },
+      {
+        property: "og:description",
+        content:
+          "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Lovable App" },
-      { name: "twitter:description", content: "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/54cab40c-4b9a-4c2e-b90f-f2170c71baec/id-preview-23301b56--6d223390-a2bf-41ed-8ae9-20fc8671918d.lovable.app-1778007762142.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/54cab40c-4b9a-4c2e-b90f-f2170c71baec/id-preview-23301b56--6d223390-a2bf-41ed-8ae9-20fc8671918d.lovable.app-1778007762142.png" },
+      {
+        name: "twitter:description",
+        content:
+          "Cycle Surge is an automated trading bot for Deriv that executes simultaneous, cycle-based trades.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/54cab40c-4b9a-4c2e-b90f-f2170c71baec/id-preview-23301b56--6d223390-a2bf-41ed-8ae9-20fc8671918d.lovable.app-1778007762142.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/54cab40c-4b9a-4c2e-b90f-f2170c71baec/id-preview-23301b56--6d223390-a2bf-41ed-8ae9-20fc8671918d.lovable.app-1778007762142.png",
+      },
     ],
     links: [
       { rel: "stylesheet", href: appCss },

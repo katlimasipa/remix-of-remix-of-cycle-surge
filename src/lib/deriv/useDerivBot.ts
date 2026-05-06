@@ -4,6 +4,20 @@ import { digitRepeatTrigger, lastDigitOf } from "./strategy";
 import { stakeForProfit } from "./stake";
 import { SYMBOL, type BotConfig, type BotStatus, type Tick, type TradeRecord } from "./types";
 
+function errMessage(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e ?? "Unknown error");
+  const obj = e as Record<string, unknown>;
+  if (typeof obj.message === "string") return obj.message;
+  return String(e ?? "Unknown error");
+}
+
+function errCode(e: unknown): string {
+  if (!e || typeof e !== "object") return "";
+  const obj = e as Record<string, unknown>;
+  if (typeof obj.code === "string") return obj.code;
+  return "";
+}
+
 interface EquityPoint {
   t: number;
   pnl: number;
@@ -73,6 +87,10 @@ export function useDerivBot() {
   const totalProfitRef = useRef(0);
   const cycleRef = useRef(0);
   const consecutiveLossesRef = useRef(0);
+  // Adaptive buy pacing: Deriv enforces a per-account buy rate limit, but it can vary.
+  // We keep a global "next allowed buy time" and increase the gap on RateLimit responses.
+  const nextAllowedBuyAtRef = useRef(0);
+  const adaptiveBuyGapMsRef = useRef(1200); // starts ~1.2s, expands on rate limit, decays on success
 
   const pushLog = useCallback((msg: string) => {
     setState((s) => ({
@@ -115,9 +133,9 @@ export function useDerivBot() {
         }
       });
       pushLog(`Subscribed to ${SYMBOL.label} ticks.`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       subscribedRef.current = false;
-      pushLog(`Failed to subscribe: ${e?.message ?? e}`);
+      pushLog(`Failed to subscribe: ${errMessage(e)}`);
     }
   }, [pushLog]);
 
@@ -140,8 +158,8 @@ export function useDerivBot() {
       pushLog("Authorized.");
       await subscribeTicks();
       return true;
-    } catch (e: any) {
-      const msg = e?.message || "Auth failed";
+    } catch (e: unknown) {
+      const msg = errMessage(e) || "Auth failed";
       setState((s) => ({ ...s, status: "error", lastError: msg, authorized: false }));
       pushLog(`Error: ${msg}`);
       return false;
@@ -162,23 +180,20 @@ export function useDerivBot() {
   }, []);
 
   const buyWithRetry = useCallback(
-    async (barrier: number, stake: number, duration: number, attempt = 0): Promise<any> => {
+    async (barrier: number, stake: number, duration: number, attempt = 0) => {
       const c = clientRef.current!;
       try {
         const res = await c.buyDigitDiff({ symbol: SYMBOL.code, barrier, stake, duration });
         return { res };
-      } catch (err: any) {
-        const code = err?.code || "";
-        const msg = (err?.message || "").toString();
-        const isRate =
-          code === "RateLimit" ||
-          /rate.?limit/i.test(msg) ||
-          /too many/i.test(msg);
-        const maxAttempts = isRate ? 5 : 2;
+      } catch (err: unknown) {
+        const code = errCode(err);
+        const msg = errMessage(err);
+        const isRate = code === "RateLimit" || /rate.?limit/i.test(msg) || /too many/i.test(msg);
+        const maxAttempts = isRate ? 6 : 2;
         if (attempt < maxAttempts) {
-          // Rate limit → exponential backoff starting ~1.2s; otherwise short retry.
+          // Rate limit → exponential backoff; other errors get a short retry.
           const delay = isRate
-            ? 1200 * Math.pow(1.6, attempt) + Math.random() * 250
+            ? 900 * Math.pow(1.7, attempt) + Math.random() * 350
             : 300 * (attempt + 1);
           await new Promise((r) => setTimeout(r, delay));
           return buyWithRetry(barrier, stake, duration, attempt + 1);
@@ -222,17 +237,17 @@ export function useDerivBot() {
 
     setState((s) => ({ ...s, trades: [...placeholders, ...s.trades].slice(0, 200) }));
 
-    // Deriv enforces a per-account buy rate limit (~1 buy/sec). Stagger sequentially
-    // with a small gap so a 5-trade batch doesn't trip "RateLimit" errors.
+    // Deriv enforces a per-account buy rate limit. We pace buys globally and adapt
+    // if the API returns RateLimit, rather than assuming a fixed 1 buy/sec.
     // CRITICAL: subscribe to each contract's settlement immediately after its buy
     // so we don't miss the is_sold event while later buys are still being placed.
-    const BUY_GAP_MS = 1100;
     const settlePromises: Promise<void>[] = [];
 
-    const handleSettlement = (p: TradeRecord, poc: any) => {
-      const profit = Number(poc.profit ?? 0);
+    const handleSettlement = (p: TradeRecord, poc: unknown) => {
+      const pocObj = (poc ?? {}) as Record<string, unknown>;
+      const profit = Number(pocObj.profit ?? 0);
       const won = profit >= 0;
-      const exitSpot = Number(poc.exit_spot);
+      const exitSpot = Number(pocObj.exit_spot);
       const exitDigit = isFinite(exitSpot) ? lastDigitOf(exitSpot) : undefined;
       let didApply = false;
       setState((s) => {
@@ -249,8 +264,8 @@ export function useDerivBot() {
                   ...t,
                   status: won ? "won" : "lost",
                   profit,
-                  payout: poc.payout,
-                  entrySpot: poc.entry_spot,
+                  payout: pocObj.payout,
+                  entrySpot: pocObj.entry_spot,
                   exitSpot,
                   exitDigit,
                   closedAt: Date.now(),
@@ -267,10 +282,38 @@ export function useDerivBot() {
 
     for (let i = 0; i < placeholders.length; i++) {
       const p = placeholders[i];
+
+      // Global pacing gate (across retries too): wait until we're allowed to buy again.
+      const now = Date.now();
+      const waitMs = Math.max(0, nextAllowedBuyAtRef.current - now);
+      if (waitMs > 0) {
+        await new Promise((res) => setTimeout(res, waitMs));
+      }
+
       const r = await buyWithRetry(barrier, stake, duration);
 
       if (r.err || !r.res?.buy) {
-        const message = r.err?.message || "Buy failed";
+        const message = errMessage(r.err) || "Buy failed";
+        const code = errCode(r.err);
+        const isRate =
+          code === "RateLimit" ||
+          /rate.?limit/i.test(String(message)) ||
+          /too many/i.test(String(message));
+
+        if (isRate) {
+          // Increase the gap aggressively on rate limit and cool down globally.
+          adaptiveBuyGapMsRef.current = Math.min(
+            6000,
+            Math.max(1400, Math.floor(adaptiveBuyGapMsRef.current * 1.6)),
+          );
+          const coolDown = adaptiveBuyGapMsRef.current + 800;
+          nextAllowedBuyAtRef.current = Date.now() + coolDown;
+          pushLog(`Rate limited by Deriv — cooling down for ${Math.round(coolDown / 100) / 10}s…`);
+        } else {
+          // Non-rate errors: keep pacing but don't expand the gap.
+          nextAllowedBuyAtRef.current = Date.now() + adaptiveBuyGapMsRef.current;
+        }
+
         setState((s) => ({
           ...s,
           trades: s.trades.map((t) =>
@@ -280,11 +323,15 @@ export function useDerivBot() {
         pushLog(`Trade failed: ${message}`);
       } else {
         const contractId = r.res.buy.contract_id as number;
+        // Successful buy: schedule next allowed buy and slowly decay gap back toward baseline.
+        nextAllowedBuyAtRef.current = Date.now() + adaptiveBuyGapMsRef.current;
+        adaptiveBuyGapMsRef.current = Math.max(
+          1100,
+          Math.floor(adaptiveBuyGapMsRef.current * 0.95),
+        );
         setState((s) => ({
           ...s,
-          trades: s.trades.map((t) =>
-            t.id === p.id ? { ...t, status: "open", contractId } : t,
-          ),
+          trades: s.trades.map((t) => (t.id === p.id ? { ...t, status: "open", contractId } : t)),
         }));
 
         settlePromises.push(
@@ -339,10 +386,6 @@ export function useDerivBot() {
             }, 60000);
           }),
         );
-      }
-
-      if (i < placeholders.length - 1) {
-        await new Promise((res) => setTimeout(res, BUY_GAP_MS));
       }
     }
 
