@@ -22,7 +22,6 @@ export function TradeGrid({ trades }: Props) {
     );
   }
 
-  // Group by cycle
   const byCycle = new Map<number, TradeRecord[]>();
   trades.forEach((t) => {
     if (!byCycle.has(t.cycle)) byCycle.set(t.cycle, []);
@@ -33,7 +32,7 @@ export function TradeGrid({ trades }: Props) {
   return (
     <div className="flex flex-col gap-4 max-h-[520px] overflow-y-auto pr-1">
       {cycles.map(([cycle, items]) => {
-        const dir = items[0]?.direction;
+        const head = items[0];
         const cyclePnl = items.reduce((s, t) => s + (t.profit ?? 0), 0);
         const allClosed = items.every(
           (t) => t.status === "won" || t.status === "lost" || t.status === "error",
@@ -43,18 +42,11 @@ export function TradeGrid({ trades }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <span className="font-display font-semibold">Cycle #{cycle}</span>
-                <span
-                  className={cn(
-                    "text-xs px-2 py-0.5 rounded-full border",
-                    dir === "CALL"
-                      ? "border-success/50 text-success bg-success/10"
-                      : "border-destructive/50 text-destructive bg-destructive/10",
-                  )}
-                >
-                  {dir === "CALL" ? "▲ RISE" : "▼ FALL"}
+                <span className="text-xs px-2 py-0.5 rounded-full border border-primary/50 text-primary bg-primary/10">
+                  DIFFERS ≠ {head?.predictedDigit}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  stake ${items[0]?.stake} · {items[0]?.symbol}
+                  stake ${head?.stake} · {head?.duration}t · R_100
                 </span>
               </div>
               {allClosed && (
@@ -82,7 +74,10 @@ export function TradeGrid({ trades }: Props) {
                     {t.status}
                   </div>
                   <div className="tabular mt-1 text-sm">
-                    {t.profit != null ? (t.profit >= 0 ? "+" : "") + t.profit.toFixed(2) : "—"}
+                    {t.exitDigit != null ? `→ ${t.exitDigit}` : "—"}
+                  </div>
+                  <div className="tabular text-[11px] mt-0.5">
+                    {t.profit != null ? (t.profit >= 0 ? "+" : "") + t.profit.toFixed(2) : ""}
                   </div>
                 </div>
               ))}
