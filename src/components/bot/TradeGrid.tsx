@@ -43,10 +43,11 @@ export function TradeGrid({ trades }: Props) {
               <div className="flex items-center gap-3">
                 <span className="font-display font-semibold">Cycle #{cycle}</span>
                 <span className="text-xs px-2 py-0.5 rounded-full border border-primary/50 text-primary bg-primary/10">
-                  DIFFERS ≠ {head?.predictedDigit}
+                  {head?.direction} · {head?.symbol}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  stake ${head?.stake} · {head?.duration}t · R_100
+                  stake ${head?.stake} · {head?.duration}
+                  {head?.durationUnit}
                 </span>
               </div>
               {allClosed && (
@@ -71,9 +72,7 @@ export function TradeGrid({ trades }: Props) {
                   title={t.error || `${t.status} • ${t.profit ?? "-"}`}
                 >
                   <div className="uppercase tracking-wide opacity-70 text-[10px]">{t.status}</div>
-                  <div className="tabular mt-1 text-sm">
-                    {t.exitDigit != null ? `→ ${t.exitDigit}` : "—"}
-                  </div>
+                  <div className="tabular mt-1 text-sm">{t.direction === "RISE" ? "↑" : "↓"}</div>
                   <div className="tabular text-[11px] mt-0.5">
                     {t.profit != null ? (t.profit >= 0 ? "+" : "") + t.profit.toFixed(2) : ""}
                   </div>

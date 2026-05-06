@@ -11,7 +11,7 @@ import { EquityCurve } from "@/components/bot/EquityCurve";
 import { ActivityLog } from "@/components/bot/ActivityLog";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
-import { SYMBOL } from "@/lib/deriv/types";
+import { SYMBOLS } from "@/lib/deriv/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
@@ -60,6 +60,7 @@ function Dashboard({ email }: { email: string }) {
           : "bg-muted-foreground";
 
   const lastTick = bot.ticks[bot.ticks.length - 1];
+  const symbolLabel = SYMBOLS.find((s) => s.code === bot.config.symbol)?.label ?? bot.config.symbol;
 
   const setCfg = (patch: Partial<typeof bot.config>) => bot.setConfig({ ...bot.config, ...patch });
 
@@ -77,7 +78,7 @@ function Dashboard({ email }: { email: string }) {
                 Architeq <span className="text-muted-foreground font-normal">Differs</span>
               </h1>
               <p className="text-[11px] text-muted-foreground mt-1 tracking-wide">
-                {SYMBOL.label} · digit-differs · batch fire
+                {symbolLabel} · rise/fall · strict EMA/RSI
               </p>
             </div>
           </Link>
@@ -207,66 +208,53 @@ function Dashboard({ email }: { email: string }) {
         <section className="glass rounded-2xl p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="font-display font-semibold">Digit Differs strategy</h2>
+              <h2 className="font-display font-semibold">Rise/Fall strategy</h2>
               <p className="text-xs text-muted-foreground mt-1">
-                Wait for a digit to repeat N times in a row, then fire {bot.config.batchSize}{" "}
-                simultaneous DIGITDIFF contracts predicting the next tick will NOT end in that
-                digit.
+                Candle-based EMA trend + RSI momentum filter. When a strict signal appears, the bot
+                enters a batch of Rise/Fall contracts.
               </p>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Trigger digit (0–9)
+                Market
               </Label>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {Array.from({ length: 10 }).map((_, d) => (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {SYMBOLS.map((s) => (
                   <button
-                    key={d}
-                    onClick={() => setCfg({ digit: d })}
+                    key={s.code}
+                    onClick={() => setCfg({ symbol: s.code })}
                     className={cn(
-                      "h-9 w-9 rounded-lg font-mono text-sm border transition-colors",
-                      bot.config.digit === d
+                      "h-9 px-3 rounded-lg font-mono text-xs border transition-colors",
+                      bot.config.symbol === s.code
                         ? "border-primary bg-primary/20 text-foreground"
                         : "border-border/40 text-muted-foreground hover:text-foreground",
                     )}
                   >
-                    {d}
+                    {s.code}
                   </button>
                 ))}
               </div>
             </div>
+
             <div>
               <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Repetitions before trigger
+                Duration (minutes)
               </Label>
               <Input
                 type="number"
                 min={1}
-                max={20}
-                value={bot.config.repetitions}
-                onChange={(e) => setCfg({ repetitions: Math.max(1, +e.target.value || 1) })}
+                max={60}
+                value={bot.config.duration}
+                onChange={(e) =>
+                  setCfg({ duration: Math.max(1, Math.min(60, +e.target.value || 1)) })
+                }
                 className="mt-2 font-mono"
               />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Current streak of {bot.config.digit}:{" "}
-                <span className="text-foreground tabular">{bot.triggerStreak}</span>
-              </p>
+              <p className="text-[10px] text-muted-foreground mt-1">Uses 1-minute candles.</p>
             </div>
-            <div>
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Contract ticks
-              </Label>
-              <Input
-                type="number"
-                min={1}
-                max={10}
-                value={bot.config.ticks}
-                onChange={(e) => setCfg({ ticks: Math.max(1, +e.target.value || 1) })}
-                className="mt-2 font-mono"
-              />
-            </div>
+
             <div>
               <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 Batch size
@@ -279,11 +267,34 @@ function Dashboard({ email }: { email: string }) {
                 onChange={(e) => setCfg({ batchSize: Math.max(1, +e.target.value || 1) })}
                 className="mt-2 font-mono"
               />
-              {bot.config.ticks <= 1 && (
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  For 1-tick contracts, batch size is forced to 1 (Deriv buy rate limit + timing).
-                </p>
-              )}
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Burst entry. Deriv may rate-limit very large batches.
+              </p>
+            </div>
+
+            <div>
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                RSI confirm
+              </Label>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Input
+                  type="number"
+                  min={50}
+                  max={80}
+                  value={bot.config.rsiRiseMin}
+                  onChange={(e) => setCfg({ rsiRiseMin: Math.max(50, +e.target.value || 55) })}
+                  className="font-mono"
+                />
+                <Input
+                  type="number"
+                  min={20}
+                  max={50}
+                  value={bot.config.rsiFallMax}
+                  onChange={(e) => setCfg({ rsiFallMax: Math.min(50, +e.target.value || 45) })}
+                  className="font-mono"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">Rise min / Fall max.</p>
             </div>
           </div>
         </section>
@@ -327,41 +338,25 @@ function Dashboard({ email }: { email: string }) {
         {/* Tick stream */}
         <section className="glass rounded-2xl p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-semibold">Last digits</h2>
-            <span className="text-xs text-muted-foreground">
-              triggers when {bot.config.repetitions}× {bot.config.digit} in a row
-            </span>
+            <h2 className="font-display font-semibold">Live feed</h2>
+            <span className="text-xs text-muted-foreground">{symbolLabel}</span>
           </div>
-          <div className="flex flex-wrap gap-1.5 font-mono">
-            {bot.ticks.slice(-30).map((t, i, arr) => {
-              const isMatch = t.lastDigit === bot.config.digit;
-              const tailMatchCount = (() => {
-                let c = 0;
-                for (let j = arr.length - 1; j >= 0; j--) {
-                  if (arr[j].lastDigit === bot.config.digit) c++;
-                  else break;
-                }
-                return c;
-              })();
-              const inActiveStreak = isMatch && i >= arr.length - tailMatchCount;
-              return (
-                <div
-                  key={`${t.epoch}-${i}`}
-                  className={cn(
-                    "h-7 w-7 rounded-md flex items-center justify-center text-xs border",
-                    inActiveStreak
-                      ? "border-primary bg-primary/30 text-foreground"
-                      : isMatch
-                        ? "border-primary/40 bg-primary/10 text-primary"
-                        : "border-border/40 text-muted-foreground",
-                  )}
-                >
-                  {t.lastDigit}
-                </div>
-              );
-            })}
-            {bot.ticks.length === 0 && (
-              <span className="text-xs text-muted-foreground">Waiting for ticks…</span>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground font-mono">
+            {lastTick ? (
+              <>
+                <span>
+                  last quote:{" "}
+                  <span className="text-foreground tabular">{lastTick.quote.toFixed(2)}</span>
+                </span>
+                {bot.lastSignal && (
+                  <span>
+                    signal:{" "}
+                    <span className="text-foreground">{bot.lastSignal.direction ?? "—"}</span>
+                  </span>
+                )}
+              </>
+            ) : (
+              <span>Waiting for ticks…</span>
             )}
           </div>
         </section>

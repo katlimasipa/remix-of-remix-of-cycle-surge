@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DerivClient } from "./client";
-import { digitRepeatTrigger, lastDigitOf } from "./strategy";
+import { lastDigitOf } from "./strategy";
+import { evaluateRiseFallSignal } from "./riseFallStrategy";
 import { stakeForProfit } from "./stake";
-import { SYMBOL, type BotConfig, type BotStatus, type Tick, type TradeRecord } from "./types";
+import {
+  SYMBOLS,
+  type BotConfig,
+  type BotStatus,
+  type Tick,
+  type TradeDirection,
+  type TradeRecord,
+} from "./types";
 
 function errMessage(e: unknown): string {
   if (!e || typeof e !== "object") return String(e ?? "Unknown error");
@@ -37,15 +45,21 @@ interface UseDerivBotState {
   balance: number | null;
   lastError: string | null;
   authorized: boolean;
-  triggerStreak: number; // current run-length of the configured digit
+  lastSignal: { direction: TradeDirection | null; reason: string } | null;
   log: { t: number; msg: string }[];
 }
 
 const DEFAULT_CONFIG: BotConfig = {
-  digit: 0,
-  repetitions: 3,
-  ticks: 1,
-  batchSize: 1,
+  symbol: "R_100",
+  duration: 3,
+  durationUnit: "m",
+  batchSize: 5,
+  granularitySec: 60,
+  emaFast: 9,
+  emaSlow: 21,
+  rsiPeriod: 14,
+  rsiRiseMin: 55,
+  rsiFallMax: 45,
   takeProfit: null,
   stopLoss: null,
   maxCycles: null,
@@ -75,7 +89,7 @@ export function useDerivBot() {
     balance: null,
     lastError: null,
     authorized: false,
-    triggerStreak: 0,
+    lastSignal: null,
     log: [],
   });
 
@@ -122,8 +136,9 @@ export function useDerivBot() {
     if (!c || subscribedRef.current) return;
     subscribedRef.current = true;
     try {
-      await c.ticks(SYMBOL.code, (msg) => {
-        if (msg.tick && msg.tick.symbol === SYMBOL.code) {
+      const symbol = configRef.current.symbol;
+      await c.ticks(symbol, (msg) => {
+        if (msg.tick && msg.tick.symbol === symbol) {
           const quote = Number(msg.tick.quote);
           const t: Tick = {
             epoch: msg.tick.epoch,
@@ -135,7 +150,8 @@ export function useDerivBot() {
           ticksRef.current = next;
         }
       });
-      pushLog(`Subscribed to ${SYMBOL.label} ticks.`);
+      const label = SYMBOLS.find((s) => s.code === symbol)?.label ?? symbol;
+      pushLog(`Subscribed to ${label} ticks.`);
     } catch (e: unknown) {
       subscribedRef.current = false;
       pushLog(`Failed to subscribe: ${errMessage(e)}`);
@@ -217,10 +233,23 @@ export function useDerivBot() {
   }, []);
 
   const buyWithRetry = useCallback(
-    async (barrier: number, stake: number, duration: number, attempt = 0) => {
+    async (
+      direction: TradeDirection,
+      stake: number,
+      duration: number,
+      durationUnit: "t" | "m",
+      symbol: string,
+      attempt = 0,
+    ) => {
       const c = clientRef.current!;
       try {
-        const res = await c.buyDigitDiff({ symbol: SYMBOL.code, barrier, stake, duration });
+        const res = await c.buyRiseFall({
+          symbol,
+          direction,
+          stake,
+          duration,
+          duration_unit: durationUnit,
+        });
         return { res };
       } catch (err: unknown) {
         const code = errCode(err);
@@ -247,29 +276,54 @@ export function useDerivBot() {
     if (inFlightRef.current) return;
 
     const cfg = configRef.current;
-    const ticks = ticksRef.current;
-    if (!digitRepeatTrigger(ticks, cfg.digit, cfg.repetitions)) return;
+    // Fetch candles and compute signal (strict EMA+RSI filter)
+    let closes: number[] = [];
+    try {
+      const res = await c.candles(cfg.symbol, cfg.granularitySec, 120);
+      const candles = (res.candles ?? res.history?.candles ?? []) as Array<Record<string, unknown>>;
+      closes = candles.map((k) => Number(k.close)).filter((n) => Number.isFinite(n));
+    } catch (e: unknown) {
+      pushLog(`Candle fetch failed: ${errMessage(e)}`);
+      return;
+    }
+    if (closes.length < Math.max(cfg.emaSlow, cfg.rsiPeriod) + 5) return;
 
-    const effectiveBatchSize = cfg.ticks <= 1 ? 1 : cfg.batchSize;
+    const signal = evaluateRiseFallSignal({
+      closes,
+      emaFast: cfg.emaFast,
+      emaSlow: cfg.emaSlow,
+      rsiPeriod: cfg.rsiPeriod,
+      rsiRiseMin: cfg.rsiRiseMin,
+      rsiFallMax: cfg.rsiFallMax,
+    });
+    setState((s) => ({
+      ...s,
+      lastSignal: { direction: signal.direction, reason: signal.reason },
+    }));
+    if (!signal.direction) return;
 
     inFlightRef.current = true;
     cycleRef.current += 1;
     const cycle = cycleRef.current;
     const stake = stakeForProfit(totalProfitRef.current);
-    const duration = Math.max(1, cfg.ticks);
-    const barrier = cfg.digit;
+    const duration = Math.max(1, cfg.duration);
+    const direction = signal.direction;
+    const symbol = cfg.symbol;
 
     setState((s) => ({ ...s, status: "running", cycle }));
     pushLog(
-      `Cycle #${cycle}: digit ${barrier} repeated ${cfg.repetitions}× → ${effectiveBatchSize}× DIGITDIFF≠${barrier} @ $${stake} (${duration}t)`,
+      `Cycle #${cycle}: ${symbol} ${direction} signal → ${cfg.batchSize}× @ $${stake} (${duration}${cfg.durationUnit})`,
     );
+    pushLog(`Signal: ${signal.reason}`);
 
-    const placeholders: TradeRecord[] = Array.from({ length: effectiveBatchSize }, (_, i) => ({
+    const placeholders: TradeRecord[] = Array.from({ length: cfg.batchSize }, (_, i) => ({
       id: `${cycle}-${i}-${Date.now()}`,
       cycle,
-      predictedDigit: barrier,
+      symbol: cfg.symbol,
+      direction,
       stake,
       duration,
+      durationUnit: cfg.durationUnit,
       status: "pending",
       openedAt: Date.now(),
     }));
@@ -287,7 +341,6 @@ export function useDerivBot() {
       const profit = Number(pocObj.profit ?? 0);
       const won = profit >= 0;
       const exitSpot = Number(pocObj.exit_spot);
-      const exitDigit = isFinite(exitSpot) ? lastDigitOf(exitSpot) : undefined;
       let didApply = false;
       setState((s) => {
         const existing = s.trades.find((t) => t.id === p.id);
@@ -306,7 +359,6 @@ export function useDerivBot() {
                   payout: pocObj.payout,
                   entrySpot: pocObj.entry_spot,
                   exitSpot,
-                  exitDigit,
                   closedAt: Date.now(),
                 }
               : t,
@@ -320,40 +372,17 @@ export function useDerivBot() {
       return didApply;
     };
 
-    for (let i = 0; i < placeholders.length; i++) {
-      const p = placeholders[i];
+    // Burst-entry: fire the batch immediately. If Deriv rate-limits, retries will back off.
+    const buyResults = await Promise.all(
+      placeholders.map(async (p) => {
+        const r = await buyWithRetry(direction, stake, duration, cfg.durationUnit, symbol);
+        return { p, r };
+      }),
+    );
 
-      // Global pacing gate (across retries too): wait until we're allowed to buy again.
-      const now = Date.now();
-      const waitMs = Math.max(0, nextAllowedBuyAtRef.current - now);
-      if (waitMs > 0) {
-        await new Promise((res) => setTimeout(res, waitMs));
-      }
-
-      const r = await buyWithRetry(barrier, stake, duration);
-
+    for (const { p, r } of buyResults) {
       if (r.err || !r.res?.buy) {
         const message = errMessage(r.err) || "Buy failed";
-        const code = errCode(r.err);
-        const isRate =
-          code === "RateLimit" ||
-          /rate.?limit/i.test(String(message)) ||
-          /too many/i.test(String(message));
-
-        if (isRate) {
-          // Increase the gap aggressively on rate limit and cool down globally.
-          adaptiveBuyGapMsRef.current = Math.min(
-            6000,
-            Math.max(1400, Math.floor(adaptiveBuyGapMsRef.current * 1.6)),
-          );
-          const coolDown = adaptiveBuyGapMsRef.current + 800;
-          nextAllowedBuyAtRef.current = Date.now() + coolDown;
-          pushLog(`Rate limited by Deriv — cooling down for ${Math.round(coolDown / 100) / 10}s…`);
-        } else {
-          // Non-rate errors: keep pacing but don't expand the gap.
-          nextAllowedBuyAtRef.current = Date.now() + adaptiveBuyGapMsRef.current;
-        }
-
         setState((s) => ({
           ...s,
           trades: s.trades.map((t) =>
@@ -361,72 +390,67 @@ export function useDerivBot() {
           ),
         }));
         pushLog(`Trade failed: ${message}`);
-      } else {
-        const contractId = r.res.buy.contract_id as number;
-        // Successful buy: schedule next allowed buy and slowly decay gap back toward baseline.
-        nextAllowedBuyAtRef.current = Date.now() + adaptiveBuyGapMsRef.current;
-        adaptiveBuyGapMsRef.current = Math.max(
-          1100,
-          Math.floor(adaptiveBuyGapMsRef.current * 0.95),
-        );
-        setState((s) => ({
-          ...s,
-          trades: s.trades.map((t) => (t.id === p.id ? { ...t, status: "open", contractId } : t)),
-        }));
+        continue;
+      }
 
-        settlePromises.push(
-          new Promise<void>((resolve) => {
-            let settled = false;
-            const finish = () => {
-              if (settled) return;
-              settled = true;
-              clearInterval(pollId);
-              resolve();
-            };
+      const contractId = r.res.buy.contract_id as number;
+      setState((s) => ({
+        ...s,
+        trades: s.trades.map((t) => (t.id === p.id ? { ...t, status: "open", contractId } : t)),
+      }));
 
-            // Primary: subscribe to live updates
-            c.openContractStream(contractId, (msg) => {
-              const poc = msg.proposal_open_contract;
-              if (!poc || !poc.is_sold) return;
-              handleSettlement(p, poc);
-              finish();
-            }).catch(() => {});
+      settlePromises.push(
+        new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearInterval(pollId);
+            resolve();
+          };
 
-            // Fallback: poll every 2s in case the stream missed the sold event
-            const pollId = setInterval(async () => {
-              try {
-                const res = await c.send({
-                  proposal_open_contract: 1,
-                  contract_id: contractId,
-                });
-                const poc = res.proposal_open_contract;
-                if (poc?.is_sold) {
-                  handleSettlement(p, poc);
-                  finish();
-                }
-              } catch {
-                /* ignore — will retry */
-              }
-            }, 2000);
+          // Primary: subscribe to live updates
+          c.openContractStream(contractId, (msg) => {
+            const poc = msg.proposal_open_contract;
+            if (!poc || !poc.is_sold) return;
+            handleSettlement(p, poc);
+            finish();
+          }).catch(() => {});
 
-            // Hard timeout safety net: 60s
-            setTimeout(() => {
-              if (!settled) {
-                pushLog(`Trade ${contractId} timeout — marking as error.`);
-                setState((s) => ({
-                  ...s,
-                  trades: s.trades.map((t) =>
-                    t.id === p.id && t.status === "open"
-                      ? { ...t, status: "error", error: "settlement timeout", closedAt: Date.now() }
-                      : t,
-                  ),
-                }));
+          // Fallback: poll every 2s in case the stream missed the sold event
+          const pollId = setInterval(async () => {
+            try {
+              const res = await c.send({
+                proposal_open_contract: 1,
+                contract_id: contractId,
+              });
+              const poc = res.proposal_open_contract;
+              if (poc?.is_sold) {
+                handleSettlement(p, poc);
                 finish();
               }
-            }, 60000);
-          }),
-        );
-      }
+            } catch {
+              /* ignore — will retry */
+            }
+          }, 2000);
+
+          // Hard timeout safety net: 3 minutes (Rise/Fall can be longer than 1 tick)
+          setTimeout(() => {
+            if (!settled) {
+              pushLog(`Trade ${contractId} timeout — marking as error.`);
+              setState((s) => ({
+                ...s,
+                trades: s.trades.map((t) =>
+                  t.id === p.id && t.status === "open"
+                    ? { ...t, status: "error", error: "settlement timeout", closedAt: Date.now() }
+                    : t,
+                ),
+              }));
+              finish();
+            }
+          }, 180000);
+        }),
+      );
     }
 
     pushLog(`Waiting for ${settlePromises.length} trades to settle...`);
@@ -465,24 +489,16 @@ export function useDerivBot() {
       pushLog(`Max cycles reached. Stopping.`);
       runningRef.current = false;
     }
-  }, [buyWithRetry, pushLog, updateProfit]);
+  }, [buyWithRetry, pushLog, refreshBalanceThrottled, updateProfit]);
 
   // UI/loop driver
   useEffect(() => {
     const id = setInterval(() => {
       const ticks = ticksRef.current.slice(-50);
-      const cfg = configRef.current;
-      // compute current run-length of cfg.digit at the tail
-      let streak = 0;
-      for (let i = ticks.length - 1; i >= 0; i--) {
-        if (ticks[i].lastDigit === cfg.digit) streak++;
-        else break;
-      }
-      setState((s) => ({ ...s, ticks, triggerStreak: streak }));
-
+      setState((s) => ({ ...s, ticks }));
       if (!runningRef.current || inFlightRef.current) return;
       runBatch();
-    }, 300);
+    }, 2000);
     return () => clearInterval(id);
   }, [runBatch]);
 

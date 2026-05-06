@@ -6,17 +6,17 @@ import { useAuth } from "@/hooks/use-auth";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Architeq Differs — Digit Differs bot for Volatility 100" },
+      { title: "Architeq SmartTrader — Rise/Fall bot for Volatility 75/100" },
       {
         name: "description",
         content:
-          "Automated Digit Differs trading on Deriv's Volatility 100 Index. Pick a digit, set repetitions, fire batches. Built by Architeq Web Agency.",
+          "Automated Rise/Fall trading on Deriv's Volatility 75 and 100 indices. Strict EMA/RSI signal with batch entry. Built by Architeq Web Agency.",
       },
-      { property: "og:title", content: "Architeq Differs — Deriv Digit Bot" },
+      { property: "og:title", content: "Architeq SmartTrader — Deriv Rise/Fall Bot" },
       {
         property: "og:description",
         content:
-          "Wait for a digit to repeat, then fire simultaneous DIGITDIFF contracts on Volatility 100.",
+          "Strict EMA trend + RSI confirmation. Fires Rise/Fall batches on Volatility 75 or 100.",
       },
     ],
   }),
@@ -57,15 +57,14 @@ function Landing() {
       <main className="relative z-10 max-w-[1200px] mx-auto px-6 pt-16 pb-24">
         <div className="max-w-3xl">
           <span className="inline-block text-[11px] uppercase tracking-[0.25em] text-primary border border-primary/40 bg-primary/10 px-3 py-1 rounded-full mb-6">
-            Volatility 100 · Digit Differs · Batch fire
+            Volatility 75/100 · Rise/Fall · Strict signals
           </span>
           <h1 className="font-display text-5xl md:text-7xl font-semibold leading-[1.02] tracking-tight">
-            When the digit repeats, <span className="text-primary">strike.</span>
+            When the signal confirms, <span className="text-primary">strike.</span>
           </h1>
           <p className="mt-6 text-lg text-muted-foreground max-w-2xl">
-            A focused execution engine for Deriv's Volatility 100 Index. Pick a digit, set how many
-            times it must repeat, and fire a batch of simultaneous DIGITDIFF contracts the instant
-            the streak hits.
+            A strict Rise/Fall engine for Deriv's synthetic indices. Choose Volatility 75 or 100,
+            then enter a batch when EMA trend and RSI momentum align.
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
             <Link to="/auth">
@@ -83,30 +82,20 @@ function Landing() {
             </a>
           </div>
 
-          {/* Live digit demo strip */}
+          {/* Live signal demo strip */}
           <div className="mt-12 glass rounded-2xl p-5">
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-3">
-              Example trigger · digit 0, 3 repetitions
+              Example signal · EMA(9)&gt;EMA(21) and RSI(14)&gt;=55
             </div>
-            <div className="flex flex-wrap gap-1.5 font-mono">
-              {[7, 4, 2, 9, 1, 3, 5, 8, 6, 0, 0, 0].map((d, i, arr) => {
-                const isStreak = i >= arr.length - 3;
-                return (
-                  <div
-                    key={i}
-                    className={
-                      "h-9 w-9 rounded-md flex items-center justify-center text-sm border " +
-                      (isStreak
-                        ? "border-primary bg-primary/30 text-foreground"
-                        : "border-border/40 text-muted-foreground")
-                    }
-                  >
-                    {d}
-                  </div>
-                );
-              })}
-              <div className="h-9 px-3 rounded-md flex items-center justify-center text-xs border border-success/50 bg-success/15 text-success ml-2">
-                FIRE 5× DIFFERS ≠ 0
+            <div className="flex flex-wrap gap-2 font-mono text-xs items-center">
+              <div className="h-9 px-3 rounded-md flex items-center justify-center border border-border/40 text-muted-foreground">
+                Trend: EMA fast above slow
+              </div>
+              <div className="h-9 px-3 rounded-md flex items-center justify-center border border-border/40 text-muted-foreground">
+                Momentum: RSI confirm zone
+              </div>
+              <div className="h-9 px-3 rounded-md flex items-center justify-center text-xs border border-success/50 bg-success/15 text-success ml-1">
+                FIRE 5× RISE
               </div>
             </div>
           </div>
@@ -115,24 +104,24 @@ function Landing() {
         <div className="mt-20 grid md:grid-cols-3 gap-5">
           {[
             {
-              t: "Volatility 100 only",
-              d: "Single-symbol focus — no scattered attention, no half-relevant signals.",
+              t: "Volatility 75 or 100",
+              d: "Choose your market and keep the signal rules consistent.",
             },
             {
-              t: "You pick the digit",
-              d: "Choose any digit 0–9 as your trigger. Tune to whichever digit your eye trusts.",
+              t: "Strict signal rules",
+              d: "EMA trend + RSI momentum confirmation. No guesswork entries.",
             },
             {
-              t: "Repetition trigger",
-              d: "Wait for N consecutive ticks ending in your digit before the bot fires.",
+              t: "Candle-based analysis",
+              d: "Uses 1-minute candles for consistent indicator calculations.",
             },
             {
-              t: "Configurable ticks",
-              d: "Set the contract duration in ticks — shorter for speed, longer for room.",
+              t: "Configurable duration",
+              d: "Run 1–60 minute contracts so entries and exits align with the analysis.",
             },
             {
               t: "Simultaneous batch",
-              d: "Fire multiple DIGITDIFF contracts at the same tick for full margin every cycle.",
+              d: "Enter multiple Rise/Fall contracts on the same signal (batch entry).",
             },
             {
               t: "Profit-tier stakes",
@@ -158,13 +147,13 @@ function Landing() {
               {
                 n: "02",
                 t: "Configure",
-                d: "Choose digit, repetitions, contract ticks, and batch size.",
+                d: "Choose market, duration, batch size, and signal thresholds.",
               },
-              { n: "03", t: "Watch", d: "The bot streams ticks and tracks the live digit streak." },
+              { n: "03", t: "Watch", d: "The bot streams ticks and monitors the candle signal." },
               {
                 n: "04",
                 t: "Strike",
-                d: "On trigger, fires N parallel DIGITDIFF contracts and settles the cycle.",
+                d: "On signal, fires N parallel Rise/Fall contracts and settles the cycle.",
               },
             ].map((s) => (
               <li key={s.n} className="border-l-2 border-primary/40 pl-4">

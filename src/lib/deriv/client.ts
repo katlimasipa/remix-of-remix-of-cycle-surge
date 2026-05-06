@@ -25,7 +25,7 @@ export interface DerivClientOptions {
   appId?: string;
   endpoint?: string;
   onStatus?: (s: "connecting" | "open" | "closed" | "error") => void;
-  onMessage?: (msg: AnyMsg) => void;
+  onMessage?: (msg: DerivMsg) => void;
 }
 
 export class DerivClient {
@@ -189,6 +189,31 @@ export class DerivClient {
       duration_unit: "t",
       symbol: opts.symbol,
       barrier: String(opts.barrier),
+    };
+    return this.send({
+      buy: 1,
+      price: opts.stake,
+      parameters,
+    });
+  }
+
+  /** Buy a Rise/Fall contract (CALL/PUT). */
+  async buyRiseFall(opts: {
+    symbol: string;
+    direction: "RISE" | "FALL";
+    stake: number;
+    duration: number;
+    duration_unit: "t" | "m" | "h" | "d";
+    currency?: string;
+  }) {
+    const parameters = {
+      amount: opts.stake,
+      basis: "stake",
+      contract_type: opts.direction === "RISE" ? "CALL" : "PUT",
+      currency: opts.currency ?? "USD",
+      duration: opts.duration,
+      duration_unit: opts.duration_unit,
+      symbol: opts.symbol,
     };
     return this.send({
       buy: 1,

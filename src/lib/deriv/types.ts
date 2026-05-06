@@ -4,18 +4,27 @@ export interface Tick {
   lastDigit: number;
 }
 
-export const SYMBOL = { code: "R_100", label: "Volatility 100 Index" };
+export type DerivSymbolCode = "R_100" | "R_75";
+
+export const SYMBOLS: Array<{ code: DerivSymbolCode; label: string }> = [
+  { code: "R_100", label: "Volatility 100 Index" },
+  { code: "R_75", label: "Volatility 75 Index" },
+];
+
+export type TradeDirection = "RISE" | "FALL";
+export type DurationUnit = "t" | "m";
 
 export interface TradeRecord {
   id: string;
   contractId?: number;
   cycle: number;
-  predictedDigit: number; // the digit we expect price to DIFFER from
+  symbol: DerivSymbolCode;
+  direction: TradeDirection;
   stake: number;
   duration: number;
+  durationUnit: DurationUnit;
   payout?: number;
   profit?: number;
-  exitDigit?: number;
   status: "pending" | "open" | "won" | "lost" | "error";
   openedAt: number;
   closedAt?: number;
@@ -25,10 +34,16 @@ export interface TradeRecord {
 }
 
 export interface BotConfig {
-  digit: number; // 0-9 — digit that must repeat to trigger
-  repetitions: number; // consecutive appearances required
-  ticks: number; // contract duration in ticks
-  batchSize: number; // simultaneous contracts per cycle
+  symbol: DerivSymbolCode;
+  duration: number;
+  durationUnit: DurationUnit;
+  batchSize: number; // contracts per signal
+  granularitySec: number; // candles granularity used for analysis
+  emaFast: number;
+  emaSlow: number;
+  rsiPeriod: number;
+  rsiRiseMin: number;
+  rsiFallMax: number;
   takeProfit: number | null;
   stopLoss: number | null;
   maxCycles: number | null;
