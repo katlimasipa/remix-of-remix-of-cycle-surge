@@ -224,22 +224,53 @@ export function useDerivBot() {
 
     // Deriv enforces a per-account buy rate limit (~1 buy/sec). Stagger sequentially
     // with a small gap so a 5-trade batch doesn't trip "RateLimit" errors.
+    // CRITICAL: subscribe to each contract's settlement immediately after its buy
+    // so we don't miss the is_sold event while later buys are still being placed.
     const BUY_GAP_MS = 1100;
-    const buyResults: Array<{ p: TradeRecord; res?: any; err?: any }> = [];
+    const settlePromises: Promise<void>[] = [];
+
+    const handleSettlement = (p: TradeRecord, poc: any) => {
+      const profit = Number(poc.profit ?? 0);
+      const won = profit >= 0;
+      const exitSpot = Number(poc.exit_spot);
+      const exitDigit = isFinite(exitSpot) ? lastDigitOf(exitSpot) : undefined;
+      let didApply = false;
+      setState((s) => {
+        const existing = s.trades.find((t) => t.id === p.id);
+        if (!existing || existing.status === "won" || existing.status === "lost") {
+          return s; // already settled — ignore duplicate
+        }
+        didApply = true;
+        return {
+          ...s,
+          trades: s.trades.map((t) =>
+            t.id === p.id
+              ? {
+                  ...t,
+                  status: won ? "won" : "lost",
+                  profit,
+                  payout: poc.payout,
+                  entrySpot: poc.entry_spot,
+                  exitSpot,
+                  exitDigit,
+                  closedAt: Date.now(),
+                }
+              : t,
+          ),
+          wins: won ? s.wins + 1 : s.wins,
+          losses: won ? s.losses : s.losses + 1,
+        };
+      });
+      if (didApply) updateProfit(profit);
+      return didApply;
+    };
+
     for (let i = 0; i < placeholders.length; i++) {
       const p = placeholders[i];
       const r = await buyWithRetry(barrier, stake, duration);
-      buyResults.push({ p, ...r });
-      if (i < placeholders.length - 1) {
-        await new Promise((res) => setTimeout(res, BUY_GAP_MS));
-      }
-    }
 
-    const settlePromises: Promise<void>[] = [];
-
-    buyResults.forEach(({ p, res, err }: any) => {
-      if (err || !res?.buy) {
-        const message = err?.message || "Buy failed";
+      if (r.err || !r.res?.buy) {
+        const message = r.err?.message || "Buy failed";
         setState((s) => ({
           ...s,
           trades: s.trades.map((t) =>
@@ -247,50 +278,73 @@ export function useDerivBot() {
           ),
         }));
         pushLog(`Trade failed: ${message}`);
-        return;
-      }
-      const contractId = res.buy.contract_id as number;
-      setState((s) => ({
-        ...s,
-        trades: s.trades.map((t) => (t.id === p.id ? { ...t, status: "open", contractId } : t)),
-      }));
+      } else {
+        const contractId = r.res.buy.contract_id as number;
+        setState((s) => ({
+          ...s,
+          trades: s.trades.map((t) =>
+            t.id === p.id ? { ...t, status: "open", contractId } : t,
+          ),
+        }));
 
-      settlePromises.push(
-        new Promise<void>((resolve) => {
-          c.openContractStream(contractId, (msg) => {
-            const poc = msg.proposal_open_contract;
-            if (!poc) return;
-            if (poc.is_sold) {
-              const profit = Number(poc.profit ?? 0);
-              const won = profit >= 0;
-              const exitSpot = Number(poc.exit_spot);
-              const exitDigit = isFinite(exitSpot) ? lastDigitOf(exitSpot) : undefined;
-              setState((s) => ({
-                ...s,
-                trades: s.trades.map((t) =>
-                  t.id === p.id
-                    ? {
-                        ...t,
-                        status: won ? "won" : "lost",
-                        profit,
-                        payout: poc.payout,
-                        entrySpot: poc.entry_spot,
-                        exitSpot,
-                        exitDigit,
-                        closedAt: Date.now(),
-                      }
-                    : t,
-                ),
-                wins: won ? s.wins + 1 : s.wins,
-                losses: won ? s.losses : s.losses + 1,
-              }));
-              updateProfit(profit);
+        settlePromises.push(
+          new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              clearInterval(pollId);
               resolve();
-            }
-          }).catch(() => resolve());
-        }),
-      );
-    });
+            };
+
+            // Primary: subscribe to live updates
+            c.openContractStream(contractId, (msg) => {
+              const poc = msg.proposal_open_contract;
+              if (!poc || !poc.is_sold) return;
+              handleSettlement(p, poc);
+              finish();
+            }).catch(() => {});
+
+            // Fallback: poll every 2s in case the stream missed the sold event
+            const pollId = setInterval(async () => {
+              try {
+                const res = await c.send({
+                  proposal_open_contract: 1,
+                  contract_id: contractId,
+                });
+                const poc = res.proposal_open_contract;
+                if (poc?.is_sold) {
+                  handleSettlement(p, poc);
+                  finish();
+                }
+              } catch {
+                /* ignore — will retry */
+              }
+            }, 2000);
+
+            // Hard timeout safety net: 60s
+            setTimeout(() => {
+              if (!settled) {
+                pushLog(`Trade ${contractId} timeout — marking as error.`);
+                setState((s) => ({
+                  ...s,
+                  trades: s.trades.map((t) =>
+                    t.id === p.id && t.status === "open"
+                      ? { ...t, status: "error", error: "settlement timeout", closedAt: Date.now() }
+                      : t,
+                  ),
+                }));
+                finish();
+              }
+            }, 60000);
+          }),
+        );
+      }
+
+      if (i < placeholders.length - 1) {
+        await new Promise((res) => setTimeout(res, BUY_GAP_MS));
+      }
+    }
 
     pushLog(`Waiting for ${settlePromises.length} trades to settle...`);
     const profitBefore = totalProfitRef.current;
